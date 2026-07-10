@@ -1,0 +1,21 @@
+services:
+  wastream:
+    build: .
+    image: wastream:local
+    container_name: wastreamreborn
+    ports:
+      - "7000:7000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - SECRET_KEY=your-secret-key-min-32-chars-long-enough
+      - ADMIN_PASSWORD=your-admin-password-here
+      - WAWACITY_URL=
+      - FREE_TELECHARGER_URL=
+      - DARKI_API_URL=https://api.example.com
+      - DARKI_API_KEY=your_api_key_here
+      - MOVIX_URL=
+      - WEBSHARE_URL=
+      - DATABASE_TYPE=sqlite
+      - DATABASE_PATH=/app/data/wastream.db
+    restart: unless-stopped

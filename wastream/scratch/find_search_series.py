@@ -1,0 +1,4 @@
+with open(r'C:\Users\Lukas\Desktop\Instantio\wastream\services\stream.py', 'r', encoding='utf-8') as f:
+    for idx, line in enumerate(f, 1):
+        if '_search_series' in line:
+            print(f'{idx}: {line.rstrip()}')

@@ -1,0 +1,12 @@
+import os
+
+# Walk all scraper files and find model_type field assignments
+for root, dirs, files in os.walk(r'C:\Users\Lukas\Desktop\Instantio\wastream\scrapers'):
+    for fname in files:
+        if not fname.endswith('.py'):
+            continue
+        fpath = os.path.join(root, fname)
+        with open(fpath, 'r', encoding='utf-8') as f:
+            for idx, line in enumerate(f, 1):
+                if 'model_type' in line:
+                    print(f'{fpath}:{idx}: {line.rstrip()}')
