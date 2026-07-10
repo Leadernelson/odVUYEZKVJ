@@ -1974,11 +1974,20 @@ async def admin_save_settings(
             setattr(settings, key, val_to_apply)
 
             # Persist to database
-            await database.execute(
+            if settings.DATABASE_TYPE == "sqlite":
+                query = """
+                    INSERT OR REPLACE INTO admin_settings (key, value)
+                    VALUES (:key, :value)
                 """
-                INSERT OR REPLACE INTO admin_settings (key, value)
-                VALUES (:key, :value)
-                """,
+            else:
+                query = """
+                    INSERT INTO admin_settings (key, value)
+                    VALUES (:key, :value)
+                    ON CONFLICT (key) DO UPDATE SET value = :value
+                """
+
+            await database.execute(
+                query,
                 {"key": key, "value": str(value) if value is not None else ""}
             )
 
