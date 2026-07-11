@@ -6,9 +6,9 @@ from xml.etree import ElementTree
 
 from wastream.config.settings import settings
 from wastream.utils.helpers import (
-    tokenize_filename, extract_quality_from_tokens, extract_language_from_tokens,
-    extract_raw_language_from_tokens, normalize_size, build_display_name, deduplicate_and_sort_results
+    normalize_size, build_display_name, deduplicate_and_sort_results
 )
+from wastream.utils.torrent import TorrentParser, ParsedTorrent
 from wastream.utils.http_client import http_client
 from wastream.utils.logger import scraper_logger
 from wastream.utils.quality import quality_sort_key
@@ -49,19 +49,35 @@ class BaseWebshare:
             })
         return files
 
-    def _verify_file(self, tokens: List[str], title_words: List[str], year: str, season: Optional[str] = None, episode: Optional[str] = None) -> bool:
+    def _verify_file(self, parsed: ParsedTorrent, title_words: List[str], year: str, season: Optional[str] = None, episode: Optional[str] = None) -> bool:
+        """
+        Validates whether a parsed file matches the required search criteria:
+        1. Contains all words from the search query in its tokens list.
+        2. Matches the exact season and episode (for series/anime episodes).
+        3. Matches the exact release year if it is a movie search.
+        
+        Args:
+            parsed (ParsedTorrent): The parsed file metadata.
+            title_words (List[str]): Individual words from the search title query.
+            year (str): The expected release year.
+            season (Optional[str]): Expected season number.
+            episode (Optional[str]): Expected episode number.
+            
+        Returns:
+            bool: True if the file meets all matching rules; False otherwise.
+        """
+        tokens = TorrentParser.tokenize(parsed.raw_title)
         for word in title_words:
             if word not in tokens:
                 return False
 
         if season and episode:
-            season_padded = str(season).zfill(2)
-            episode_padded = str(episode).zfill(2)
-            pattern = f"s{season_padded}e{episode_padded}"
-            if pattern not in tokens:
-                joined = "".join(tokens)
-                if pattern not in joined:
+            try:
+                req_s, req_e = int(season), int(episode)
+                if parsed.season != req_s or parsed.episode != req_e:
                     return False
+            except (ValueError, TypeError):
+                return False
         else:
             if year and year not in tokens:
                 return False
@@ -132,14 +148,14 @@ class BaseWebshare:
         results = []
 
         for file_data in files:
-            tokens = tokenize_filename(file_data["name"])
+            parsed = TorrentParser.parse(file_data["name"])
 
-            if not self._verify_file(tokens, title_words, year, season if is_series else None, episode if is_series else None):
+            if not self._verify_file(parsed, title_words, year, season if is_series else None, episode if is_series else None):
                 continue
 
-            quality = extract_quality_from_tokens(tokens)
-            language = extract_language_from_tokens(tokens)
-            raw_language = extract_raw_language_from_tokens(tokens)
+            quality = parsed.quality
+            language = parsed.language
+            raw_language = parsed.raw_language
             size = self._format_size(file_data["size"])
             ident = file_data["ident"]
 

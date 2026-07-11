@@ -6,41 +6,19 @@ from typing import List, Dict, Optional, Tuple
 from wastream.utils.http_client import http_client
 from wastream.utils.logger import scraper_logger
 from wastream.utils.helpers import (
-    tokenize_filename, extract_quality_from_tokens,
-    extract_language_from_tokens, extract_raw_language_from_tokens,
     build_display_name, normalize_size, normalize_tracker_url
 )
 from wastream.utils.quality import quality_sort_key
+from wastream.utils.torrent import TorrentParser
 
-
-# ===========================
-# Episode Parsing Helpers
-# ===========================
-# Matches S02E04, S2E4, S02.E04, s2.e4, etc.
-_SXEX_RE = re.compile(r'[Ss](\d{1,2})[.\s]?[Ee](\d{1,3})', re.IGNORECASE)
-# Matches 2x04, 02x04 style
-_ALT_EP_RE = re.compile(r'(?<!\d)(\d{1,2})[x](\d{1,3})(?!\d)', re.IGNORECASE)
-# Matches S02 NOT followed by an episode marker (season pack)
-_SEASON_ONLY_RE = re.compile(r'[Ss](\d{1,2})(?![.\s]?[Ee])', re.IGNORECASE)
-
-
-def _parse_season_episode(release_name: str) -> Tuple[Optional[int], Optional[int]]:
-    """Return (season, episode) parsed from a release name.
-    Returns (season, None) for season packs, (None, None) if unrecognised.
-    """
-    m = _SXEX_RE.search(release_name)
-    if m:
-        return int(m.group(1)), int(m.group(2))
-    m = _ALT_EP_RE.search(release_name)
-    if m:
-        return int(m.group(1)), int(m.group(2))
-    m = _SEASON_ONLY_RE.search(release_name)
-    if m:
-        return int(m.group(1)), None  # season pack — no specific episode
-    return None, None
 
 
 class BaseTorznab:
+    """
+    Scraper implementation for querying Torznab-compatible indexers and trackers.
+    Resolves searches by querying XML feeds, parsing custom metadata attributes,
+    and validating results against the new TorrentParser.
+    """
     def __init__(self, name: str, url: str, api_key: str, auth_type: str = "query"):
         self.name = name
         self.url = normalize_tracker_url(name, url)
@@ -50,6 +28,20 @@ class BaseTorznab:
     async def search(self, title: str, year: Optional[str] = None, metadata: Optional[Dict] = None,
                      season: Optional[str] = None, episode: Optional[str] = None,
                      config: Optional[Dict] = None) -> List[Dict]:
+        """
+        Executes a search query against the configured Torznab indexer.
+        
+        Args:
+            title (str): Title of the movie, series, or anime.
+            year (Optional[str]): Production or release year.
+            metadata (Optional[Dict]): Additional metadata context.
+            season (Optional[str]): Season number for TV show queries.
+            episode (Optional[str]): Episode number for TV show queries.
+            config (Optional[Dict]): Settings dictionary for filters and preferences.
+            
+        Returns:
+            List[Dict]: List of parsed torrent dictionaries containing magnet links, size, quality, and languages.
+        """
         if not self.api_key or not self.url:
             scraper_logger.debug(f"[{self.name}] URL or API key not configured, skipping")
             return []
@@ -140,10 +132,10 @@ class BaseTorznab:
                 size_str = normalize_size(size_str)
 
                 # Tokenize and parse release name
-                tokens = tokenize_filename(release_name)
-                quality = extract_quality_from_tokens(tokens)
-                language = extract_language_from_tokens(tokens)
-                raw_language = extract_raw_language_from_tokens(tokens)
+                parsed = TorrentParser.parse(release_name)
+                quality = parsed.quality
+                language = parsed.language
+                raw_language = parsed.raw_language
 
                 # --- Episode validation ---
                 # When we're searching for a specific episode, verify the release
@@ -153,23 +145,21 @@ class BaseTorznab:
                 if season and episode:
                     try:
                         req_s, req_e = int(season), int(episode)
-                        parsed_s, parsed_e = _parse_season_episode(release_name)
-
-                        if parsed_s is not None:
-                            if parsed_s != req_s:
+                        if parsed.season is not None:
+                            if parsed.season != req_s:
                                 # Wrong season entirely → skip
                                 scraper_logger.debug(
-                                    f"[{self.name}] Skip S{parsed_s}E{parsed_e} ≠ S{req_s}E{req_e}: {release_name}"
+                                    f"[{self.name}] Skip S{parsed.season}E{parsed.episode} ≠ S{req_s}E{req_e}: {release_name}"
                                 )
                                 continue
-                            if parsed_e is not None and parsed_e != req_e:
+                            if parsed.episode is not None and parsed.episode != req_e:
                                 # Correct season but wrong episode → skip
                                 scraper_logger.debug(
-                                    f"[{self.name}] Skip S{parsed_s}E{parsed_e} ≠ S{req_s}E{req_e}: {release_name}"
+                                    f"[{self.name}] Skip S{parsed.season}E{parsed.episode} ≠ S{req_s}E{req_e}: {release_name}"
                                 )
                                 continue
-                            # parsed_e is None → season pack → keep
-                        # parsed_s is None → no episode info in name → keep (conservative)
+                            # parsed.episode is None → season pack → keep
+                        # parsed.season is None → no episode info in name → keep (conservative)
 
                     except (ValueError, TypeError):
                         pass  # can't validate → keep

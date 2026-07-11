@@ -48,6 +48,7 @@ from wastream.utils.languages import MULTI_LANGUAGE_PREFIX, MULTI_PREFIX_LENGTH
 from wastream.utils.logger import stream_logger, metadata_logger
 from wastream.utils.quality import quality_sort_key, extract_resolution
 from wastream.utils.validators import extract_media_info
+from wastream.utils.torrent import TorrentRanker, ParsedTorrent
 
 
 # ===========================
@@ -245,6 +246,7 @@ class StreamService:
     ) -> List[Dict]:
         streams = []
         dead_links_count = 0
+        ranker = TorrentRanker(config)
 
         all_links = [r.get("link") for r in results if r.get("link")]
         dead_links_map = await check_dead_links_batch(all_links)
@@ -355,28 +357,14 @@ class StreamService:
             if display_name and display_name != "Unknown":
                 description_parts.append(f"📁 {display_name}")
 
-            q_key = quality_sort_key(result)
             size_bytes = parse_size_to_bytes(size)
-            lang_priority = 0 if language != "Unknown" else 1
-
-            # Sub-priority for French Audio vs VOSTFR
-            french_sub_priority = 0
-            if config.get("prioritize_vff_multi", False) and language == "French":
-                display_name_upper = display_name.upper() if display_name else ""
-                is_vostfr = any(tag in display_name_upper for tag in ["VOSTFR", "SUBFRENCH", "SUBFR", ".SUB."])
-                is_audio = any(tag in display_name_upper for tag in ["VFF", "MULTI", "VF", "TRUEFRENCH"])
-                if is_audio and not is_vostfr:
-                    french_sub_priority = 0
-                elif is_vostfr:
-                    french_sub_priority = 1
-
-            # Stream type priority (DDL/NZB vs Torrent)
-            is_torrent = (result.get("model_type") == "torrent")
-            pref = config.get("stream_type_preference", "ddl_first")
-            if pref == "torrent_first":
-                stream_type_priority = 0 if is_torrent else 1
-            else:  # ddl_first
-                stream_type_priority = 1 if is_torrent else 0
+            parsed_torrent = ParsedTorrent(
+                raw_title=display_name,
+                quality=quality,
+                language=language,
+                raw_language=result.get("raw_language", "Unknown"),
+            )
+            sort_values = ranker.get_sort_values(result, parsed_torrent, cache_status, size_bytes)
 
             streams.append({
                 "name": stream_name,
@@ -385,14 +373,7 @@ class StreamService:
                     "filename": display_name
                 },
                 "url": playback_url,
-                "_sort_values": {
-                    "cached": 0 if cache_status == "cached" else 1,
-                    "resolution": q_key[0],
-                    "size": -size_bytes,
-                    "release_type": q_key[1],
-                    "language": (lang_priority, french_sub_priority, language),
-                    "stream_type": stream_type_priority,
-                },
+                "_sort_values": sort_values,
             })
 
         default_sort_order = ["cached", "resolution", "size", "release_type", "language", "stream_type"]
